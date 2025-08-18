@@ -59,73 +59,98 @@ def cleanup_text(text):
     cleaned_text = " ".join(cleaned_text.split())
     return cleaned_text
 
-def get_weekly_video_transcripts(channel_url):
+def process_source(source_url):
     """
-    YouTubeチャンネルから動画の文字起こしを取得し、要約・クリーンアップし、
-    外部プロンプトファイルと結合して単一ファイルにまとめる。
+    単一のURL（チャンネル or 再生リスト）を処理し、要約のリストを返す。
     """
-    print("デバッグ: チャンネル情報の取得を開始します...")
     one_week_ago = (datetime.now() - timedelta(days=7)).date()
-    output_dir = 'transcripts'
-    if not os.path.exists(output_dir): os.makedirs(output_dir)
+    # 一時ファイル用のディレクトリ
+    transcripts_dir = 'transcripts'
+    if not os.path.exists(transcripts_dir): os.makedirs(transcripts_dir)
 
-    ydl_opts_info = {'playlistend': 20, 'quiet': True, 'ignoreerrors': True}
+    if 'list=' in source_url:
+        print(f"\n{'='*20}\n再生リストの処理を開始します...\n{'='*20}")
+        url_to_fetch = source_url
+    else:
+        channel_name = source_url.split('@')[-1]
+        print(f"\n{'='*20}\nチャンネル '{channel_name}' の処理を開始します...\n{'='*20}")
+        url_to_fetch = f"{source_url.rstrip('/')}/videos"
+
+    ydl_opts_info = {'playlistend': 50, 'quiet': True, 'ignoreerrors': True}
     videos_to_process = []
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info_dict = ydl.extract_info(f"{channel_url.rstrip('/')}/videos", download=False)
+            info_dict = ydl.extract_info(url_to_fetch, download=False)
             if 'entries' in info_dict and info_dict['entries']:
                 for video in info_dict.get('entries', []):
-                    if video and 'upload_date' in video and 'title' in video:
-                        upload_date = datetime.strptime(video['upload_date'], "%Y%m%d").date()
-                        if upload_date >= one_week_ago:
-                            videos_to_process.append({
-                                'url': video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}",
-                                'title': video['title'], 'id': video['id']
-                            })
-                            print(f"デバッグ: 対象動画が見つかりました: '{video['title']}'")
+                    if not (video and 'upload_date' in video and 'title' in video): continue
+                    upload_date = datetime.strptime(video['upload_date'], "%Y%m%d").date()
+                    if upload_date >= one_week_ago:
+                        videos_to_process.append({
+                            'url': video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}",
+                            'title': video['title'], 'id': video['id']
+                        })
+                        print(f"  [+] 対象動画を発見: '{video['title']}'")
     except Exception as e:
-        print(f"予期せぬエラー: チャンネル情報の取得中にエラーが発生しました: {e}")
-        return
+        print(f"  [!] 情報の取得中にエラーが発生しました: {e}")
+        return []
     
     if not videos_to_process:
-        print("過去1週間に新しい動画はありませんでした。"); return
+        print("  [-] 期間内に処理対象の動画が見つかりませんでした。")
+        return []
     
-    print(f"\n{len(videos_to_process)}件の動画が見つかりました。字幕をダウンロードします。")
+    print(f"\n  [*] {len(videos_to_process)}件の動画が見つかりました。字幕をダウンロードします。")
 
     for video in videos_to_process:
-        print(f"デバッグ: '{video['title']}' の字幕をダウンロード中...")
+        print(f"    - ダウンロード中: '{video['title']}'")
         try:
-            output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
+            output_template = os.path.join(transcripts_dir, '%(title)s.%(ext)s')
             command = ['yt-dlp', '--write-auto-sub', '--sub-lang', 'ja', '--skip-download', '-o', output_template, video['url']]
             subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            print(f"警告: '{video['title']}' の字幕ダウンロードに失敗しました。エラー: {e.stderr}")
+            print(f"    [!] 警告: 字幕ダウンロードに失敗しました。エラー: {e.stderr}")
         except Exception as e:
-            print(f"予期せぬエラー: '{video['title']}' の処理中にエラーが発生しました: {e}")
+            print(f"    [!] 予期せぬエラー: {e}")
+
+    summaries = []
+    print(f"\n  [*] 字幕ファイルの変換・要約を開始します...")
+    processed_titles = {re.sub(r'[\\/*?:"<>|]', "", video['title']): True for video in videos_to_process}
+    for filename in os.listdir(transcripts_dir):
+        if filename.endswith(".vtt"):
+            base_title = os.path.splitext(filename)[0]
+            if base_title.endswith('.ja'): base_title = os.path.splitext(base_title)[0]
+            if base_title in processed_titles:
+                vtt_path = os.path.join(transcripts_dir, filename)
+                print(f"    - 処理中: '{base_title}'")
+                try:
+                    with open(vtt_path, 'r', encoding='utf-8') as f: vtt_content = f.read()
+                    transcript_text = parse_vtt(vtt_content)
+                    summary_text = summarize_text(transcript_text, sentence_count=25)
+                    final_text = cleanup_text(summary_text)
+                    summaries.append(final_text)
+                    os.remove(vtt_path)
+                except Exception as e:
+                    print(f"    [!] エラー: '{base_title}' の処理中にエラーが発生しました: {e}")
+    return summaries
+
+if __name__ == '__main__':
+    source_urls = [
+        'https://www.youtube.com/@AC_Investor',
+        'https://www.youtube.com/watch?v=5tE_1UbzliI&list=PL-edxQ__zW_VuVcjAhsL_JvlfiZD19LdS',
+    ]
+    # === ▼▼▼ 修正箇所 ▼▼▼ ===
+    # 最終的な出力ファイルを保存するディレクトリを定義
+    final_output_dir = 'output'
+    if not os.path.exists(final_output_dir):
+        os.makedirs(final_output_dir)
+    # === ▲▲▲ ▲▲▲ ▲▲▲ ===
 
     all_summaries = []
-    print("\nデバッグ: 字幕ファイルの変換・要約・クリーンアップを開始します...")
-    
-    for filename in os.listdir(output_dir):
-        if filename.endswith(".vtt"):
-            vtt_path = os.path.join(output_dir, filename)
-            video_title = os.path.splitext(filename)[0]
-            if video_title.endswith('.ja'): video_title = os.path.splitext(video_title)[0]
-            print(f"デバッグ: '{video_title}' を処理中...")
-            try:
-                with open(vtt_path, 'r', encoding='utf-8') as f:
-                    vtt_content = f.read()
-                transcript_text = parse_vtt(vtt_content)
-                summary_text = summarize_text(transcript_text, sentence_count=25)
-                final_text = cleanup_text(summary_text)
-                all_summaries.append(final_text)
-                print(f"処理完了: '{video_title}' の要約をメモリに追加しました。")
-                os.remove(vtt_path)
-            except Exception as e:
-                print(f"エラー: '{video_title}' の処理中にエラーが発生しました: {e}")
+    for url in source_urls:
+        summaries = process_source(url)
+        all_summaries.extend(summaries)
 
-    # === ▼▼▼ 修正箇所 ▼▼▼ ===
     if all_summaries:
         prompt_filename = 'prompt.txt'
         default_prompt_text = """以下のテキストは、複数の投資に関するYouTube動画の文字起こしを要約したものです。
@@ -133,30 +158,32 @@ def get_weekly_video_transcripts(channel_url):
 
 ---
 """
-        # prompt.txtがなければ、デフォルトの内容で自動生成する
         if not os.path.exists(prompt_filename):
-            print(f"デバッグ: プロンプトファイル '{prompt_filename}' が見つかりません。デフォルトのプロンプトで作成します。")
+            print(f"\n[*] デバッグ: プロンプトファイル '{prompt_filename}' が見つかりません。デフォルトの内容で作成します。")
             with open(prompt_filename, 'w', encoding='utf-8') as f:
                 f.write(default_prompt_text)
         
-        # 外部ファイルからプロンプトを読み込む
         with open(prompt_filename, 'r', encoding='utf-8') as f:
             prompt_header = f.read()
             
         today_str = datetime.now().strftime('%Y-%m-%d')
-        final_filename = f"prompt_for_ai_{today_str}.txt"
+        # === ▼▼▼ 修正箇所 ▼▼▼ ===
+        # ファイル名とパスを結合して、'output' ディレクトリ内に保存する
+        base_filename = f"prompt_for_ai_{today_str}.txt"
+        final_filepath = os.path.join(final_output_dir, base_filename)
+        # === ▲▲▲ ▲▲▲ ▲▲▲ ===
+        
         separator = "\n\n---\n\n"
         summaries_content = separator.join(all_summaries)
         final_content = prompt_header + "\n" + summaries_content
         
-        with open(final_filename, 'w', encoding='utf-8') as f:
+        with open(final_filepath, 'w', encoding='utf-8') as f:
             f.write(final_content)
         
-        print(f"\nAIへの指示（プロンプト）を含むファイルを '{final_filename}' に保存しました。")
-    # === ▲▲▲ ▲▲▲ ▲▲▲ ===
+        # === ▼▼▼ 修正箇所 ▼▼▼ ===
+        # 保存先のパスをメッセージに表示
+        print(f"\n{'='*20}\n全ての要約を '{final_filepath}' にまとめて保存しました。\n{'='*20}")
+    else:
+        print("\n[*] 全てのURLで処理対象の動画が見つかりませんでした。")
 
     print("\n全ての処理が完了しました。")
-
-if __name__ == '__main__':
-    channel_url = 'https://www.youtube.com/@AC_Investor'
-    get_weekly_video_transcripts(channel_url)
