@@ -1,193 +1,161 @@
 import yt_dlp
-import json
 import re
 import os
+import subprocess
 from datetime import datetime, timedelta
-from yt_dlp.postprocessor import PostProcessor
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.text_rank import TextRankSummarizer
 
-# === ▼▼▼ 修正箇所 ▼▼▼ ===
-# AIが読みやすいようにVTTを解析する、より高機能な関数
 def parse_vtt(vtt_content):
     """
-    WEBVTT形式の文字列から、タイムスタンプやメタデータを削除し、
-    AIが読みやすいように重複や部分的な重複を除去した、
-    クリーンな文字起こしテキストを抽出します。
+    WEBVTTから重複等を除いたクリーンな文字起こしを生成する。
     """
     lines = vtt_content.strip().split('\n')
-    
-    # 1. まず、VTTからテキスト部分だけを抽出し、基本的な掃除をする
     raw_transcript_lines = []
     for line in lines:
-        # 不要な行（タイムスタンプ、空行、メタデータなど）をスキップ
-        if not line.strip() or '-->' in line or line.strip().isdigit() or line.strip() == 'WEBVTT' or line.strip().startswith('Kind:') or line.strip().startswith('Language:'):
+        if not line.strip() or '-->' in line or line.strip().isdigit() or 'WEBVTT' in line or 'Kind:' in line or 'Language:' in line:
             continue
-        
-        # HTMLタグ、[音楽]のようなメタデータ、話者マーカーを削除
         cleaned_line = re.sub(r'<[^>]+>', '', line)
         cleaned_line = re.sub(r'\[[^]]+\]', '', cleaned_line)
         cleaned_line = cleaned_line.replace('&gt;&gt;', '').strip()
-        cleaned_line = " ".join(cleaned_line.split()) # 連続する空白を1つにまとめる
-
+        cleaned_line = " ".join(cleaned_line.split())
         if cleaned_line:
             raw_transcript_lines.append(cleaned_line)
-
-    # 2. 重複や部分的な重複を取り除くロジック
-    if not raw_transcript_lines:
-        return ""
-        
-    final_transcript = []
-    if raw_transcript_lines:
-        # 最初の行は無条件で追加
-        final_transcript.append(raw_transcript_lines[0])
-
-        for i in range(1, len(raw_transcript_lines)):
-            prev_line = final_transcript[-1]
-            current_line = raw_transcript_lines[i]
-            
-            # 全く同じ行ならスキップ
-            if current_line == prev_line:
-                continue
-            
-            # 前の行が現在の行に内包されている場合 (例: "A" の次に "A B")
-            # 前の行を現在の行で置き換えることで、文章を結合する
-            if current_line.startswith(prev_line):
-                final_transcript[-1] = current_line
-                continue
-                
-            # 現在の行が前の行に内包されている場合 (例: "A B" の次に "B")
-            # これは古い情報なのでスキップ
-            if prev_line.endswith(current_line):
-                continue
-
-            # 上記のどれにも当てはまらない場合は、新しい発話として追加
-            final_transcript.append(current_line)
-            
+    if not raw_transcript_lines: return ""
+    final_transcript = [raw_transcript_lines[0]]
+    for i in range(1, len(raw_transcript_lines)):
+        prev_line, current_line = final_transcript[-1], raw_transcript_lines[i]
+        if current_line == prev_line: continue
+        if current_line.startswith(prev_line):
+            final_transcript[-1] = current_line
+            continue
+        if prev_line.endswith(current_line): continue
+        final_transcript.append(current_line)
     return " ".join(final_transcript)
-# === ▲▲▲ 修正箇所 ▲▲▲ ===
 
+def summarize_text(text, sentence_count=25):
+    """
+    テキストを抜粋型要約する。
+    """
+    if not text: return ""
+    parser = PlaintextParser.from_string(text, Tokenizer("japanese"))
+    summarizer = TextRankSummarizer()
+    summary_sentences = summarizer(parser.document, sentence_count)
+    return " ".join([str(sentence) for sentence in summary_sentences])
 
-# yt-dlpのダウンロード処理後にVTTをTXTに変換するためのカスタムPostProcessor
-class VttToTextPostProcessor(PostProcessor):
-    def __init__(self, out_dir):
-        super(VttToTextPostProcessor, self).__init__(None)
-        self.out_dir = out_dir
-
-    def run(self, info):
-        sub_file_path = None
-        base_name, _ = os.path.splitext(info['_filename'])
-        potential_sub_path = base_name + '.ja.vtt' # yt-dlpが生成する標準的な字幕ファイル名
-
-        if os.path.exists(potential_sub_path):
-            sub_file_path = potential_sub_path
-        else:
-            # フォールバックとしてディレクトリを探索
-            for file in os.listdir(self.out_dir):
-                if file.startswith(info['id']) and file.endswith('.vtt'):
-                    sub_file_path = os.path.join(self.out_dir, file)
-                    break
-        
-        if sub_file_path and os.path.exists(sub_file_path):
-            print(f"デバッグ: 字幕ファイルが見つかりました: {sub_file_path}")
-            try:
-                with open(sub_file_path, 'r', encoding='utf-8') as f:
-                    vtt_content = f.read()
-                
-                transcript_text = parse_vtt(vtt_content)
-                
-                txt_file_path = os.path.splitext(sub_file_path)[0] + '.txt'
-                with open(txt_file_path, 'w', encoding='utf-8') as out_f:
-                    out_f.write(transcript_text)
-                
-                print(f"クリーンな文字起こしを '{txt_file_path}' に保存しました。")
-                
-                try:
-                    os.remove(sub_file_path)
-                    print(f"デバッグ: 元のVTTファイルを削除しました: {sub_file_path}")
-                except OSError as e:
-                    print(f"警告: 元のVTTファイルの削除に失敗しました: {sub_file_path} - {e}")
-                
-            except Exception as e:
-                print(f"エラー: 動画ID: {info['id']} の文字起こし処理中にエラーが発生しました: {e}")
-        else:
-            print(f"警告: 動画ID: {info['id']} の字幕ファイルが見つかりませんでした。")
-            
-        return [], info
+def cleanup_text(text):
+    """
+    会話特有のフィラーワードや相づちを、より強力に削除する。
+    """
+    filler_words = [
+        'えーと', 'えーっと', 'えっと', 'えー', 'あのー', 'あの', 
+        'まー', 'まあ', 'ま', 'なんか', 'ええと', 'え', 'あ',
+        'はい', 'うん', 'ええ', 'はいはい', 'そうですね'
+    ]
+    pattern = re.compile(r'\b(' + '|'.join(filler_words) + r')\b[、\s]*', re.IGNORECASE)
+    cleaned_text = pattern.sub('', text)
+    cleaned_text = re.sub(r'\s+([。、,.!?])', r'\1', cleaned_text)
+    cleaned_text = " ".join(cleaned_text.split())
+    return cleaned_text
 
 def get_weekly_video_transcripts(channel_url):
     """
-    指定されたYouTubeチャンネルの過去1週間の動画の文字起こしを取得します。
+    YouTubeチャンネルから動画の文字起こしを取得し、要約・クリーンアップし、
+    外部プロンプトファイルと結合して単一ファイルにまとめる。
     """
     print("デバッグ: チャンネル情報の取得を開始します...")
     one_week_ago = (datetime.now() - timedelta(days=7)).date()
-    
     output_dir = 'transcripts'
-    try:
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            print(f"デバッグ: ディレクトリ '{output_dir}' を作成しました。")
-    except OSError as e:
-        print(f"エラー: ディレクトリ '{output_dir}' の作成に失敗しました: {e}")
-        return
+    if not os.path.exists(output_dir): os.makedirs(output_dir)
 
-    ydl_opts_info = {
-        'playlistend': 20,
-        'quiet': True,
-        'ignoreerrors': True,
-    }
-    
-    video_urls = []
-    
+    ydl_opts_info = {'playlistend': 20, 'quiet': True, 'ignoreerrors': True}
+    videos_to_process = []
     try:
-        videos_url = f"{channel_url.rstrip('/')}/videos"
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            print(f"デバッグ: チャンネルURL '{videos_url}' から最新20件の動画情報を抽出中...")
-            info_dict = ydl.extract_info(videos_url, download=False)
-            
+            info_dict = ydl.extract_info(f"{channel_url.rstrip('/')}/videos", download=False)
             if 'entries' in info_dict and info_dict['entries']:
-                print("デバッグ: 取得した動画情報を1件ずつ日付でフィルタリングします...")
-                for video in info_dict['entries']:
-                    if video and 'upload_date' in video:
-                        upload_date_str = video['upload_date']
-                        upload_date = datetime.strptime(upload_date_str, "%Y%m%d").date()
-                        
+                for video in info_dict.get('entries', []):
+                    if video and 'upload_date' in video and 'title' in video:
+                        upload_date = datetime.strptime(video['upload_date'], "%Y%m%d").date()
                         if upload_date >= one_week_ago:
-                            video_url = video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}"
-                            video_urls.append(video_url)
-                            print(f"デバッグ: 動画ID {video['id']} (アップロード日: {upload_date_str}) を対象に追加しました。")
-                        else:
-                            print(f"デバッグ: 動画ID {video['id']} (アップロード日: {upload_date_str}) は対象外です。")
-            
-            print(f"デバッグ: {len(video_urls)}件の動画URLを抽出しました。")
-    except yt_dlp.utils.DownloadError as e:
-        print(f"エラー: チャンネル情報の取得に失敗しました: {e}")
-        return
+                            videos_to_process.append({
+                                'url': video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}",
+                                'title': video['title'], 'id': video['id']
+                            })
+                            print(f"デバッグ: 対象動画が見つかりました: '{video['title']}'")
     except Exception as e:
         print(f"予期せぬエラー: チャンネル情報の取得中にエラーが発生しました: {e}")
         return
     
-    if not video_urls:
-        print("過去1週間に新しい動画はありませんでした。")
-        return
+    if not videos_to_process:
+        print("過去1週間に新しい動画はありませんでした。"); return
+    
+    print(f"\n{len(videos_to_process)}件の動画が見つかりました。字幕をダウンロードします。")
 
-    print(f"{len(video_urls)}件の動画が見つかりました。文字起こしを取得します。")
+    for video in videos_to_process:
+        print(f"デバッグ: '{video['title']}' の字幕をダウンロード中...")
+        try:
+            output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
+            command = ['yt-dlp', '--write-auto-sub', '--sub-lang', 'ja', '--skip-download', '-o', output_template, video['url']]
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print(f"警告: '{video['title']}' の字幕ダウンロードに失敗しました。エラー: {e.stderr}")
+        except Exception as e:
+            print(f"予期せぬエラー: '{video['title']}' の処理中にエラーが発生しました: {e}")
+
+    all_summaries = []
+    print("\nデバッグ: 字幕ファイルの変換・要約・クリーンアップを開始します...")
     
-    ydl_opts_download = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['ja'],
-        'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
-        'quiet': True,
-    }
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
-            pp = VttToTextPostProcessor(output_dir)
-            ydl.add_post_processor(pp)
-            print("デバッグ: 見つかった動画の字幕を一括ダウンロード中...")
-            ydl.download(video_urls)
-    except Exception as e:
-        print(f"エラー: 動画の文字起こし取得中にエラーが発生しました: {e}")
+    for filename in os.listdir(output_dir):
+        if filename.endswith(".vtt"):
+            vtt_path = os.path.join(output_dir, filename)
+            video_title = os.path.splitext(filename)[0]
+            if video_title.endswith('.ja'): video_title = os.path.splitext(video_title)[0]
+            print(f"デバッグ: '{video_title}' を処理中...")
+            try:
+                with open(vtt_path, 'r', encoding='utf-8') as f:
+                    vtt_content = f.read()
+                transcript_text = parse_vtt(vtt_content)
+                summary_text = summarize_text(transcript_text, sentence_count=25)
+                final_text = cleanup_text(summary_text)
+                all_summaries.append(final_text)
+                print(f"処理完了: '{video_title}' の要約をメモリに追加しました。")
+                os.remove(vtt_path)
+            except Exception as e:
+                print(f"エラー: '{video_title}' の処理中にエラーが発生しました: {e}")
+
+    # === ▼▼▼ 修正箇所 ▼▼▼ ===
+    if all_summaries:
+        prompt_filename = 'prompt.txt'
+        default_prompt_text = """以下のテキストは、複数の投資に関するYouTube動画の文字起こしを要約したものです。
+内容の要点を保持しつつ、冗長な表現や会話特有のフィラーワードを削除し、全体を一つの滑らかで一貫性のあるレポートにまとめてください。
+
+---
+"""
+        # prompt.txtがなければ、デフォルトの内容で自動生成する
+        if not os.path.exists(prompt_filename):
+            print(f"デバッグ: プロンプトファイル '{prompt_filename}' が見つかりません。デフォルトのプロンプトで作成します。")
+            with open(prompt_filename, 'w', encoding='utf-8') as f:
+                f.write(default_prompt_text)
+        
+        # 外部ファイルからプロンプトを読み込む
+        with open(prompt_filename, 'r', encoding='utf-8') as f:
+            prompt_header = f.read()
+            
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        final_filename = f"prompt_for_ai_{today_str}.txt"
+        separator = "\n\n---\n\n"
+        summaries_content = separator.join(all_summaries)
+        final_content = prompt_header + "\n" + summaries_content
+        
+        with open(final_filename, 'w', encoding='utf-8') as f:
+            f.write(final_content)
+        
+        print(f"\nAIへの指示（プロンプト）を含むファイルを '{final_filename}' に保存しました。")
+    # === ▲▲▲ ▲▲▲ ▲▲▲ ===
+
+    print("\n全ての処理が完了しました。")
 
 if __name__ == '__main__':
     channel_url = 'https://www.youtube.com/@AC_Investor'
