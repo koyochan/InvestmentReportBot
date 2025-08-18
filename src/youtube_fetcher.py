@@ -166,10 +166,10 @@ if __name__ == '__main__':
         with open(prompt_filename, 'r', encoding='utf-8') as f:
             prompt_header = f.read()
             
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = datetime.now().strftime('%Y%m%d')
         # === ▼▼▼ 修正箇所 ▼▼▼ ===
         # ファイル名とパスを結合して、'output' ディレクトリ内に保存する
-        base_filename = f"prompt_for_ai_{today_str}.txt"
+        base_filename = f"{today_str}_youtube_report.txt"
         final_filepath = os.path.join(final_output_dir, base_filename)
         # === ▲▲▲ ▲▲▲ ▲▲▲ ===
         
