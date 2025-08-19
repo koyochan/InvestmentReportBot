@@ -4,93 +4,83 @@ import time
 from datetime import datetime, timedelta
 import os
 import re
+import yfinance as yf
+import pandas_ta as ta
 
-def get_historical_price(stock_code, date_str):
+def get_technical_indicators(stock_code: str):
     """
-    Yahoo!ファイナンスから指定された銘柄コードと日付の終値を取得する。
+    yfinanceとpandas-taを使用して、指定された銘柄のテクニカル指標を取得する。
     Args:
         stock_code (str): 証券コード (例: "7203")
-        date_str (str): 日付文字列 (例: "2025-08-18")
     Returns:
-        str: 指定日の終値。取得失敗時は "取得失敗" などを返す。
+        dict: 'price', 'change', 'macd', 'rsi', 'volume' を含む辞書。
+              取得失敗時は値が "N/A" となる。
     """
     try:
-        # Yahoo Financeの履歴データURLを構築
-        formatted_date = date_str.replace('-', '')
-        historical_url = f"https://finance.yahoo.co.jp/quote/{stock_code}.T/history?from={formatted_date}&to={formatted_date}&timeFrame=d&page=1"
+        # .T をつけて日本の証券取引所を指定
+        ticker = yf.Ticker(f"{stock_code}.T")
+        # 1年分のデータを取得してテクニカル指標を計算
+        hist = ticker.history(period="1y")
+
+        if hist.empty:
+            return {
+                'price': 'N/A', 'change': 'N/A', 'macd': 'N/A',
+                'rsi': 'N/A', 'volume': 'N/A'
+            }
+
+        # pandas-taでMACDとRSIを計算
+        hist.ta.macd(append=True)
+        hist.ta.rsi(append=True)
+
+        # 最新のデータを取得
+        latest = hist.iloc[-1]
+        price = latest['Close']
+        change = price - hist.iloc[-2]['Close']
         
-        response = requests.get(historical_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # 最新の指標を取得
+        macd_line = latest.get('MACD_12_26_9', 'N/A')
+        macd_signal = latest.get('MACDs_12_26_9', 'N/A')
+        macd_hist = latest.get('MACDh_12_26_9', 'N/A')
+        rsi = latest.get('RSI_14', 'N/A')
+        volume = latest['Volume']
 
-        # 履歴データテーブルを探す (クラス名は変更される可能性があるため、部分一致で検索)
-        history_table = soup.find('table', class_=re.compile(r"HistoryTable_"))
-        if not history_table:
-            return "取得失敗(テーブル無)"
+        return {
+            'price': f"{price:.2f}",
+            'change': f"{change:+.2f}",
+            'macd': f"L:{macd_line:.2f} S:{macd_signal:.2f} H:{macd_hist:.2f}",
+            'rsi': f"{rsi:.2f}",
+            'volume': f"{volume:,}"
+        }
 
-        # テーブル内のデータ行を探す
-        rows = history_table.find_all('tr')
-        # ヘッダー行を除き、データ行をループ
-        for row in rows[1:]:
-            cols = row.find_all('td')
-            if len(cols) > 4: # 少なくとも終値のカラムまで存在するか確認
-                # 終値は通常5番目のカラム(インデックス4)
-                closing_price = cols[4].text.strip().replace(',', '')
-                return closing_price
-        
-        # ループを抜けてしまった場合は、その日のデータがなかったことを意味する
-        return "データ無(休日等)"
-
-    except requests.exceptions.RequestException as e:
-        print(f"  [ERROR] Yahoo!履歴データの通信エラー ({stock_code} on {date_str}): {e}")
-        return "取得失敗(通信)"
     except Exception as e:
-        print(f"  [ERROR] Yahoo!履歴データの解析エラー ({stock_code} on {date_str}): {e}")
-        return "取得失敗(不明)"
+        print(f"  [ERROR] yfinanceでのデータ取得エラー ({stock_code}): {e}")
+        return {
+            'price': '取得失敗', 'change': '取得失敗', 'macd': '取得失敗',
+            'rsi': '取得失敗', 'volume': '取得失敗'
+        }
 
-def get_current_price_and_change(stock_code):
+def get_historical_price(stock_code: str, date_str: str):
     """
-    Yahoo!ファイナンスから指定された銘柄コードの現在の株価と前日比を取得する。
-    ページのテキストラベルを基準に情報を探すことで安定性を向上。
+    yfinanceを使用して、指定された日付の終値を取得する。
     Args:
-        stock_code (str): 証券コード（例: "7203"）
+        stock_code (str): 証券コード
+        date_str (str): 日付 (YYYY-MM-DD)
     Returns:
-        dict: 'price'と'change'のキーを持つ辞書。取得失敗時は値が "取得失敗" となる。
+        str: 終値、または "データ無"
     """
-    yahoo_url = f"https://finance.yahoo.co.jp/quote/{stock_code}.T"
     try:
-        response = requests.get(yahoo_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        result = {'price': '取得失敗', 'change': '取得失敗'}
-
-        # --- 株価の取得 ---
-        price_label = soup.find('dt', string='株価')
-        if price_label and price_label.find_next_sibling('dd'):
-            price_dd = price_label.find_next_sibling('dd')
-            price_span = price_dd.find('span')
-            if price_span:
-                result['price'] = price_span.text.strip().replace(',', '')
-
-        # --- 前日比の取得 ---
-        change_label = soup.find('dt', string='前日比')
-        if change_label and change_label.find_next_sibling('dd'):
-            change_dd = change_label.find_next_sibling('dd')
-            change_span = change_dd.find('span')
-            if change_span:
-                change_text = ' '.join(change_span.text.strip().split())
-                result['change'] = change_text
-        
-        return result
-
-    except requests.exceptions.RequestException as e:
-        print(f"  [ERROR] Yahoo!ファイナンスへの通信エラー ({stock_code}): {e}")
-        return {'price': '取得失敗(通信)', 'change': '取得失敗(通信)'}
+        ticker = yf.Ticker(f"{stock_code}.T")
+        # 指定日のデータを取得
+        start_date = datetime.strptime(date_str, '%Y-%m-%d')
+        end_date = start_date + timedelta(days=1)
+        hist = ticker.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+        if not hist.empty:
+            return f"{hist.iloc[0]['Close']:.2f}"
+        else:
+            return "データ無(休日等)"
     except Exception as e:
-        print(f"  [ERROR] Yahoo!ファイナンスの解析エラー ({stock_code}): {e}")
-        return {'price': '取得失敗(不明)', 'change': '取得失敗(不明)'}
-
+        print(f"  [ERROR] yfinanceでの過去データ取得エラー ({stock_code} on {date_str}): {e}")
+        return "取得失敗"
 
 def extract_data_from_html(html_content):
     """
@@ -108,7 +98,7 @@ def extract_data_from_html(html_content):
                 stock_cards = list_container.find_all('a')
         
     if not stock_cards:
-        return ["銘柄リストが見つかりませんでした。"]
+        return ["銘柄リストが見つかりませんでした。" ]
 
     for card in stock_cards:
         try:
@@ -182,7 +172,6 @@ def main():
     for url in urls_to_scrape:
         print(f"\n[INFO] 処理中: {url}")
         try:
-            # URLから日付部分を抽出
             date_part_for_history = url.split('/')[-2]
 
             response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
@@ -194,33 +183,29 @@ def main():
                     print(f"  [WARN] {stocks_data[0] if stocks_data else '銘柄データが空です。'}")
                     continue
 
-                print(f"[OK] {len(stocks_data)}件の銘柄データを検出。株価情報を取得します...")
+                print(f"[OK] {len(stocks_data)}件の銘柄データを検出。株価とテクニカル指標を取得します...")
                 
                 processed_stocks_lines = []
                 for stock in stocks_data:
-                    # サーバー負荷軽減のため待機
-                    time.sleep(0.5) 
+                    time.sleep(0.5)
                     
-                    # 1. シグナル発生日の終値を取得
-                    print(f"  -> {stock['name']} ({stock['code']}) のシグナル日({date_part_for_history})の株価を取得中...")
+                    print(f"  -> {stock['name']} ({stock['code']}) のデータを取得中...")
                     historical_price = get_historical_price(stock['code'], date_part_for_history)
+                    tech_indicators = get_technical_indicators(stock['code'])
                     
-                    # 2. 現在の株価と前日比を取得
-                    print(f"  -> {stock['name']} ({stock['code']}) の現在値を取得中...")
-                    price_info = get_current_price_and_change(stock['code'])
-                    
-                    # 出力フォーマットを更新
-                    line = (f"{stock['name']} ({stock['code']}) | "
-                            f"勝率: {stock['win_loss']} | "
-                            f"期待上昇率: {stock['return_rate']} | "
-                            f"シグナル日終値: {historical_price}円 | "
-                            f"現在の株価: {price_info['price']}円 (前日比: {price_info['change']})")
+                    line = (f"{stock['name']} ({stock['code']})\n"
+                            f"  勝率: {stock['win_loss']} | 期待上昇率: {stock['return_rate']}\n"
+                            f"  シグナル日終値: {historical_price}円\n"
+                            f"  現在の株価: {tech_indicators['price']}円 (前日比: {tech_indicators['change']})\n"
+                            f"  MACD: {tech_indicators['macd']} | RSI: {tech_indicators['rsi']}\n"
+                            f"  出来高: {tech_indicators['volume']}")
                     
                     print(f"     [RESULT] {line}")
                     processed_stocks_lines.append(line)
                 
                 date_part_for_header = url.split('/')[-2] + " " + url.split('/')[-1]
-                all_signals_text.append(f"--- {date_part_for_header} ---\n" + "\n".join(processed_stocks_lines))
+                all_signals_text.append(f"--- {date_part_for_header} ---
+" + "\n".join(processed_stocks_lines))
                 processed_count += 1
             else:
                 print(f"  [WARN] ページ取得に失敗しました。ステータスコード: {response.status_code}")

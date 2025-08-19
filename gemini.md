@@ -8,7 +8,7 @@ Gemini投資レポートシステム開発計画書 - Gemini.md
 
 ミクロ経済/トレンド: NewsPicks（無料記事）、Fred Wilson (AVC)
 
-定性情報/心理: 中嶋聡さんのメルマガ、金融情報サイト（空売り情報など）
+定性情報/心理: 中嶋聡さんのメルマガ、金融情報サイト（空売り情報など）、Twitter（特定アカウント）
 
 客観的指標: VIX指数、主要株価指数（日経平均、S&P 500、NASDAQ）、主要暗号資産価格、為替レート（ドル円）
 
@@ -26,7 +26,7 @@ Gemini投資レポートシステム開発計画書 - Gemini.md
 本システムは、Pythonで開発します。PythonはAPI連携のライブラリが豊富で、開発が迅速に進められます。
 
 モジュール名	役割	使用技術/ライブラリ
-データ収集モジュール	各情報ソースからデータを取得。ウェブスクレイピングや公開APIを利用。	Python requests, BeautifulSoup, youtube-dl, yfinance, pandas
+データ収集モジュール	各情報ソースからデータを取得。ウェブスクレイピングや公開APIを利用。	Python requests, BeautifulSoup, youtube-dl, yfinance, pandas, snscrape
 Gemini API連携モジュール	収集したデータをAPIに渡し、高度な分析・レポート生成を行う。	Python google-generativeai ライブラリ
 レポート生成モジュール	Gemini APIの出力をMarkdown形式のレポートに整形・出力する。	Python os, markdown
 スケジューリング	週に一度のレポート生成を自動化。	cron (Linux) / タスクスケジューラ (Windows)
@@ -40,7 +40,7 @@ Python 3.8+ 環境をセットアップします。
 
 Bash
 
-pip install google-generativeai requests beautifulsoup4 pandas youtube-dl yfinance
+pip install google-generativeai requests beautifulsoup4 pandas youtube-dl yfinance snscrape pandas-ta
 Gemini APIキーを取得し、環境変数に設定します。
 
 Bash
@@ -56,6 +56,8 @@ YouTube: youtube-dl を用いて、@AC_Investorチャンネルの最新動画の
 公的機関レポート: IMF、世界銀行、BISの公開ウェブページから、最新レポートの要約部分や本文をスクレイピングで取得します。
 
 株価・指標データ: yfinanceなどの無料ライブラリを利用し、日次データを取得・保存します。
+
+Twitter: snscrapeを利用し、指定したアカウントの過去1週間のツイートを取得し、outputディレクトリに保存します。
 
 ステップ3: Gemini APIプロンプト設計（最も重要）
 レポートの多層的な分析を可能にするため、複数の情報源を統合し、論理的推論を促す複雑なプロンプトを作成します。
@@ -76,8 +78,9 @@ prompt = """
 - **トレンド/ミクロ経済（NewsPicks, AVC）**:
   - NewsPicksの注目無料記事要約: {newspicks_text}
   - Fred Wilsonのブログ（AVC）記事要約: {avc_text}
-- **定性分析/投資家心理（中嶋聡, 公開情報）**:
+- **定性分析/投資家心理（中嶋聡, 公開情報, Twitter）**:
   - 中嶋聡さんメルマガの要約: {nakajima_text}
+  - Twitterの注目アカウントのツイート: {twitter_text}
   - 一般公開されている空売り残高情報、マーケットセンチメント指標: {public_sentiment_data}
 - **客観的指標**:
   - VIX指数: {vix_value}
