@@ -1,3 +1,13 @@
+# Pythonのキャッシュファイル
+__pycache__/
+*.pyc
+
+# yt-dlpが生成する一時ファイル用ディレクトリ
+transcripts/
+
+# スクリプトが生成する最終出力ディレクトリ
+output/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
