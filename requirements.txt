@@ -7,4 +7,6 @@ yfinance
 snscrape
 python-dotenv
 sumy
-grok
+xai-sdk
+openai-whisper
+youtube-transcript-api

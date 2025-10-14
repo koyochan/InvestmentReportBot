@@ -2,187 +2,144 @@ import yt_dlp
 import re
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.summarizers.text_rank import TextRankSummarizer
+import whisper
 
-def parse_vtt(vtt_content):
+def get_channel_videos(channel_url: str, days: int) -> list:
     """
-    WEBVTTから重複等を除いたクリーンな文字起こしを生成する。
+    yt-dlpを使用して、チャンネルの指定された日数以内の動画リストを取得する。
     """
-    lines = vtt_content.strip().split('\n')
-    raw_transcript_lines = []
-    for line in lines:
-        if not line.strip() or '-->' in line or line.strip().isdigit() or 'WEBVTT' in line or 'Kind:' in line or 'Language:' in line:
-            continue
-        cleaned_line = re.sub(r'<[^>]+>', '', line)
-        cleaned_line = re.sub(r'\[[^]]+\]', '', cleaned_line)
-        cleaned_line = cleaned_line.replace('&gt;&gt;', '').strip()
-        cleaned_line = " ".join(cleaned_line.split())
-        if cleaned_line:
-            raw_transcript_lines.append(cleaned_line)
-    if not raw_transcript_lines: return ""
-    final_transcript = [raw_transcript_lines[0]]
-    for i in range(1, len(raw_transcript_lines)):
-        prev_line, current_line = final_transcript[-1], raw_transcript_lines[i]
-        if current_line == prev_line: continue
-        if current_line.startswith(prev_line):
-            final_transcript[-1] = current_line
-            continue
-        if prev_line.endswith(current_line): continue
-        final_transcript.append(current_line)
-    return " ".join(final_transcript)
+    print(f"チャンネル '{channel_url}' の過去{days}日間の動画リストを取得中...")
+    ydl_opts = {
+        'playlistend': 50,
+        'quiet': True,
+        'ignoreerrors': True,
+        'extract_flat': False,
+    }
+    videos = []
+    target_date = (datetime.now() - timedelta(days=days)).date()
 
-def summarize_text(text, sentence_count=25):
-    """
-    テキストを抜粋型要約する。
-    """
-    if not text: return ""
-    parser = PlaintextParser.from_string(text, Tokenizer("japanese"))
-    summarizer = TextRankSummarizer()
-    summary_sentences = summarizer(parser.document, sentence_count)
-    return " ".join([str(sentence) for sentence in summary_sentences])
-
-def cleanup_text(text):
-    """
-    会話特有のフィラーワードや相づちを、より強力に削除する。
-    """
-    filler_words = [
-        'えーと', 'えーっと', 'えっと', 'えー', 'あのー', 'あの', 
-        'まー', 'まあ', 'ま', 'なんか', 'ええと', 'え', 'あ',
-        'はい', 'うん', 'ええ', 'はいはい', 'そうですね'
-    ]
-    pattern = re.compile(r'\b(' + '|'.join(filler_words) + r')\b[、\s]*', re.IGNORECASE)
-    cleaned_text = pattern.sub('', text)
-    cleaned_text = re.sub(r'\s+([。、,.!?])', r'\1', cleaned_text)
-    cleaned_text = " ".join(cleaned_text.split())
-    return cleaned_text
-
-def process_source(source_url, days: int):
-    """
-    単一のURL（チャンネル or 再生リスト）を処理し、要約のリストを返す。
-    """
-    one_week_ago = (datetime.now() - timedelta(days=days)).date()
-    # 一時ファイル用のディレクトリ
-    transcripts_dir = 'transcripts'
-    if not os.path.exists(transcripts_dir): os.makedirs(transcripts_dir)
-
-    if 'list=' in source_url:
-        print(f"\n{'='*20}\n再生リストの処理を開始します...\n{'='*20}")
-        url_to_fetch = source_url
-    else:
-        channel_name = source_url.split('@')[-1]
-        print(f"\n{'='*20}\nチャンネル '{channel_name}' の処理を開始します...\n{'='*20}")
-        url_to_fetch = f"{source_url.rstrip('/')}/videos"
-
-    ydl_opts_info = {'playlistend': 50, 'quiet': True, 'ignoreerrors': True}
-    videos_to_process = []
-    
     try:
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info_dict = ydl.extract_info(url_to_fetch, download=False)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(channel_url, download=False)
             if 'entries' in info_dict and info_dict['entries']:
                 for video in info_dict.get('entries', []):
-                    if not (video and 'upload_date' in video and 'title' in video): continue
+                    if not (video and 'id' in video and 'title' in video and 'upload_date' in video):
+                        continue
+                    
                     upload_date = datetime.strptime(video['upload_date'], "%Y%m%d").date()
-                    if upload_date >= one_week_ago:
-                        videos_to_process.append({
-                            'url': video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}",
-                            'title': video['title'], 'id': video['id']
-                        })
-                        print(f"  [+] 対象動画を発見: '{video['title']}'")
+                    if upload_date >= target_date:
+                        videos.append({'id': video['id'], 'title': video['title'], 'url': video.get('webpage_url') or f"https://www.youtube.com/watch?v={video['id']}"})
+                        print(f"  [+] 対象動画を発見: '{video['title']}' ({upload_date})")
     except Exception as e:
-        print(f"  [!] 情報の取得中にエラーが発生しました: {e}")
-        return []
-    
-    if not videos_to_process:
-        print("  [-] 期間内に処理対象の動画が見つかりませんでした。")
-        return []
-    
-    print(f"\n  [*] {len(videos_to_process)}件の動画が見つかりました。字幕をダウンロードします。")
-
-    for video in videos_to_process:
-        print(f"    - ダウンロード中: '{video['title']}'")
-        try:
-            output_template = os.path.join(transcripts_dir, '%(title)s.%(ext)s')
-            command = ['/Library/Frameworks/Python.framework/Versions/3.10/bin/yt-dlp', '--write-auto-sub', '--sub-lang', 'ja', '--skip-download', '-o', output_template, video['url']]
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            print(f"    [!] 警告: 字幕ダウンロードに失敗しました。エラー: {e.stderr}")
-        except Exception as e:
-            print(f"    [!] 予期せぬエラー: {e}")
-
-    summaries = []
-    print(f"\n  [*] 字幕ファイルの変換・要約を開始します...")
-    processed_titles = {re.sub(r'[\\/*?:"<>|]', "", video['title']): True for video in videos_to_process}
-    for filename in os.listdir(transcripts_dir):
-        if filename.endswith(".vtt"):
-            base_title = os.path.splitext(filename)[0]
-            if base_title.endswith('.ja'): base_title = os.path.splitext(base_title)[0]
-            if base_title in processed_titles:
-                vtt_path = os.path.join(transcripts_dir, filename)
-                print(f"    - 処理中: '{base_title}'")
-                try:
-                    with open(vtt_path, 'r', encoding='utf-8') as f: vtt_content = f.read()
-                    transcript_text = parse_vtt(vtt_content)
-                    summary_text = summarize_text(transcript_text, sentence_count=25)
-                    final_text = cleanup_text(summary_text)
-                    summaries.append(final_text)
-                    os.remove(vtt_path)
-                except Exception as e:
-                    print(f"    [!] エラー: '{base_title}' の処理中にエラーが発生しました: {e}")
-    return summaries
+        print(f"  [!] 動画リストの取得中にエラーが発生しました: {e}")
+    return videos
 
 def fetch_youtube_summaries(source_urls: list[str], days: int) -> str:
     """
-    複数のYouTubeのURLから動画の要約を取得し、1つのファイルにまとめる。
-
-    Args:
-        source_urls (list[str]): YouTubeチャンネルまたは再生リストのURLリスト。
-        days (int): 何日前までの動画を対象とするか。
-
-    Returns:
-        str: 保存されたファイルのパス。要約がなければ空文字を返す。
+    複数のYouTubeのURLから音声をダウンロードし、Whisperで文字起こしを行う。
     """
-    final_output_dir = 'output'
-    if not os.path.exists(final_output_dir):
-        os.makedirs(final_output_dir)
-
-    all_summaries = []
+    all_transcripts = []
     print(f"Fetching YouTube videos from the last {days} days...")
-    for url in source_urls:
-        summaries = process_source(url, days=days)
-        all_summaries.extend(summaries)
 
-    if not all_summaries:
-        print("\n[*] No videos found to process for any of the URLs.")
+    print("  [*] Whisperモデルをロード中... (初回は時間がかかります)")
+    try:
+        model = whisper.load_model("small")
+        print("  [*] Whisperモデルのロード完了。")
+    except Exception as e:
+        print(f"  [!] Whisperモデルのロードに失敗しました: {e}")
         return ""
 
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    audio_dir = os.path.join(project_root, 'transcripts')
+    if not os.path.exists(audio_dir):
+        os.makedirs(audio_dir)
+
+    for url in source_urls:
+        print(f"\n{'='*20}\n処理を開始します: {url}\n{'='*20}")
+        
+        if 'list=' in url:
+            print("  [*] 再生リストの処理は現在未対応です。スキップします。")
+            continue
+        else:
+            videos_to_process = get_channel_videos(f"{url.rstrip('/')}/videos", days)
+
+        if not videos_to_process:
+            print("  [-] 期間内に処理対象の動画が見つかりませんでした。")
+            continue
+
+        print(f"\n  [*] {len(videos_to_process)}件の動画の音声をダウンロードし、文字起こしします.")
+
+        for video in videos_to_process:
+                            audio_path = None
+                            try:
+                                print(f"\n    - 音声ダウンロード中: '{video['title']}'")
+                                output_template = os.path.join(audio_dir, f"{video['id']}.%(ext)s")
+                                command = ['yt-dlp', '-x', '--audio-format', 'm4a', '-o', output_template, video['url']]
+                                
+                                result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+                                
+                                audio_path_search = re.search(r'\[ExtractAudio\] Destination: (.*)', result.stdout)
+                                if audio_path_search:
+                                    audio_path = audio_path_search.group(1).strip()
+                                else:
+                                    potential_path = os.path.join(audio_dir, f"{video['id']}.m4a")
+                                    if os.path.exists(potential_path):
+                                        audio_path = potential_path
+                                    else:
+                                        print(f"    [!] 警告: ダウンロードされた音声ファイルが見つかりません。スキップします。")
+                                        continue
+                    
+                                print(f"    - 音声ダウンロード完了: {os.path.basename(audio_path)}")
+                                
+                                print(f"    - 文字起こし中 (Whisper)...")
+                                transcription_result = model.transcribe(audio_path, language="en")
+                                transcript_text = transcription_result['text']
+                                
+                                if transcript_text:
+                                    all_transcripts.append(f"--- {video['title']} ---\n{transcript_text}")
+                                    print(f"    - 文字起こし完了。")
+                                else:
+                                    print(f"    [!] 警告: 文字起こし結果が空でした。")
+                    
+                            except subprocess.CalledProcessError as e:
+                                print(f"    [!] 警告: 音声ダウンロードに失敗しました。 stderr: {e.stderr}")
+                            except Exception as e:
+                                print(f"    [!] 予期せぬエラーが発生しました: {e}")
+                            finally:
+                                if audio_path and os.path.exists(audio_path):
+                                    os.remove(audio_path)
+                                    print(f"    - クリーンアップ完了: {os.path.basename(audio_path)}")
+                            
+                            print("    ... 5秒待機 ...")
+                            time.sleep(5)
+    if not all_transcripts:
+        print("\n[*] 警告: どの動画からも文字起こしを生成できませんでした。")
+        return ""
+
+    output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'output')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
     today_str = datetime.now().strftime('%Y%m%d')
     base_filename = f"{today_str}_youtube_report.txt"
-    # outputディレクトリはsrcと同階層にある想定
-    final_filepath = os.path.join(os.path.dirname(__file__), '..', '..', 'output', base_filename)
-
-
-    separator = "\n\n---\n\n"
-    summaries_content = separator.join(all_summaries)
+    final_filepath = os.path.join(output_dir, base_filename)
+    
+    separator = "\n\n"
+    content = separator.join(all_transcripts)
     
     with open(final_filepath, 'w', encoding='utf-8') as f:
-        f.write(summaries_content)
+        f.write(content)
     
-    print(f"\n{'='*20}\nAll summaries saved to '{final_filepath}'.\n{'='*20}")
+    print(f"\n{'='*20}\nAll transcripts saved to '{final_filepath}'.\n{'='*20}")
     return final_filepath
 
 if __name__ == '__main__':
-    # テスト用のURLリスト
     test_source_urls = [
         'https://www.youtube.com/@AC_Investor',
-        'https://www.youtube.com/watch?v=5tE_1UbzliI&list=PL-edxQ__zW_VuVcjAhsL_JvlfiZD19LdS',
         'https://www.youtube.com/@mabuchi-mariko/'
     ]
     DAYS_TO_FETCH = 7
-    
     fetch_youtube_summaries(test_source_urls, DAYS_TO_FETCH)
-
     print("\nYouTube fetching process finished.")

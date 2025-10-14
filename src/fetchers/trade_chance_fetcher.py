@@ -140,35 +140,42 @@ def extract_data_from_html(html_content):
 
 def main(days: int = 7):
     """
-    メインの処理を実行する関数
+    日本市場(jp)からトレードチャンスの情報を取得する。
     """
-    base_url = "https://sbi.alpaca-tech.ai/trade_chance/buy"
-    urls_to_scrape = []
+    base_url = "https://sbi.alpaca-tech.ai/trade_chance"
+    markets = ["jp"] # 米国市場(us)を削除
+    all_signals_text = []
     today = datetime.now()
 
-    print("--- 取得対象URLリスト ---")
-    # 取得日数を引数で指定できるようにする
-    for i in range(days): 
-        target_date = today - timedelta(days=i)
-        date_str = target_date.strftime('%Y-%m-%d')
-        morning_url = f"{base_url}/{date_str}/morning"
-        evening_url = f"{base_url}/{date_str}/evening"
-        urls_to_scrape.append(morning_url)
-        urls_to_scrape.append(evening_url)
-        print(morning_url)
-        print(evening_url)
-    print("------------------------")
+    print("--- トレードチャンス 取得対象URLリスト ---")
+    
+    urls_to_scrape = []
+    for market in markets:
+        for i in range(days):
+            target_date = today - timedelta(days=i)
+            date_str = target_date.strftime('%Y-%m-%d')
+            # 新しいURL形式に対応
+            morning_url = f"{base_url}/{market}/buy/{date_str}/morning"
+            evening_url = f"{base_url}/{market}/buy/{date_str}/evening"
+            urls_to_scrape.append(morning_url)
+            urls_to_scrape.append(evening_url)
+            print(morning_url)
+            print(evening_url)
+            
+    print("------------------------------------")
 
-    all_signals_text = []
     processed_count = 0
-
     for url in urls_to_scrape:
         print(f"\n[INFO] 処理中: {url}")
         try:
-            date_part_for_history = url.split('/')[-2]
+            # URLから日付と市場タイプを抽出
+            parts = url.split('/')
+            date_part_for_history = parts[-2]
+            market_type = parts[-4].upper() # JP or US
 
             response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
             print(f"  [DEBUG] Status Code: {response.status_code}")
+            
             if response.status_code == 200:
                 stocks_data = extract_data_from_html(response.content)
                 
@@ -180,9 +187,13 @@ def main(days: int = 7):
                 
                 processed_stocks_lines = []
                 for stock in stocks_data:
+                    # 米国株の場合、yfinanceのティッカー形式が異なるため、.T をつけない
+                    ticker_code = stock['code'] if market_type == 'US' else f"{stock['code']}.T"
+                    
                     time.sleep(0.5)
                     
                     print(f"  -> {stock['name']} ({stock['code']}) のデータを取得中...")
+                    # yfinanceは米国株の過去データ取得も同じ関数で対応可能
                     historical_price = get_historical_price(stock['code'], date_part_for_history)
                     tech_indicators = get_technical_indicators(stock['code'])
                     
@@ -196,9 +207,11 @@ def main(days: int = 7):
                     print(f"     [RESULT] {line}")
                     processed_stocks_lines.append(line)
                 
-                date_part_for_header = url.split('/')[-2] + " " + url.split('/')[-1]
+                date_part_for_header = f"{market_type} - {url.split('/')[-2]} {url.split('/')[-1]}"
                 all_signals_text.append(f"--- {date_part_for_header} ---\n" + "\n".join(processed_stocks_lines))
                 processed_count += 1
+            elif response.status_code == 404:
+                print(f"  [INFO] ページが見つかりませんでした (404)。レポートはまだ公開されていない可能性があります。")
             else:
                 print(f"  [WARN] ページ取得に失敗しました。ステータスコード: {response.status_code}")
 
@@ -212,7 +225,8 @@ def main(days: int = 7):
     print(f"\n[INFO] スクレピング完了。データ取得に成功したページ数: {processed_count} 件")
 
     if all_signals_text:
-        output_dir = 'output'
+        # 保存先をプロジェクトルートのoutputディレクトリに変更
+        output_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'output')
         os.makedirs(output_dir, exist_ok=True)
         today_filename_str = today.strftime('%Y%m%d')
         output_filename = f"{today_filename_str}_trade_chance_report_with_prices.txt"
