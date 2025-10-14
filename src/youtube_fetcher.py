@@ -106,7 +106,7 @@ def process_source(source_url):
         print(f"    - ダウンロード中: '{video['title']}'")
         try:
             output_template = os.path.join(transcripts_dir, '%(title)s.%(ext)s')
-            command = ['yt-dlp', '--write-auto-sub', '--sub-lang', 'ja', '--skip-download', '-o', output_template, video['url']]
+            command = ['/Library/Frameworks/Python.framework/Versions/3.10/bin/yt-dlp', '--write-auto-sub', '--sub-lang', 'ja', '--skip-download', '-o', output_template, video['url']]
             subprocess.run(command, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
             print(f"    [!] 警告: 字幕ダウンロードに失敗しました。エラー: {e.stderr}")
