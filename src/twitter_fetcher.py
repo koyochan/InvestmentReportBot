@@ -2,21 +2,25 @@
 import snscrape.modules.twitter as sntwitter
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+import os
 
-def get_last_week_tweets(usernames: list[str]) -> str:
+def get_tweets(usernames: list[str], days: int) -> str:
     """
-    指定されたTwitterユーザー名のリストから過去1週間のツイートを取得し、
+    指定されたTwitterユーザー名のリストから過去指定日数のツイートを取得し、
     テキストファイルに保存します。
 
     Args:
         usernames: Twitterのユーザー名のリスト。
+        days: 何日前までのツイートを取得するか。
 
     Returns:
         保存されたファイルのパス。
     """
     all_tweets = []
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=7)
+    start_date = end_date - timedelta(days=days)
+
+    print(f"Fetching tweets from the last {days} days for: {usernames}")
 
     for username in usernames:
         try:
@@ -30,7 +34,7 @@ def get_last_week_tweets(usernames: list[str]) -> str:
             print(f"Error fetching tweets for {username}: {e}")
 
     if not all_tweets:
-        print("No tweets found in the last week.")
+        print(f"No tweets found in the last {days} days.")
         return ""
 
     # データフレームを作成してソート
@@ -38,11 +42,13 @@ def get_last_week_tweets(usernames: list[str]) -> str:
     df = df.sort_values(by='Date', ascending=False)
 
     # ファイルに保存
-    output_path = "output/twitter_posts.txt"
+    output_dir = 'output'
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "twitter_posts.txt")
+
     with open(output_path, "w", encoding="utf-8") as f:
         for index, row in df.iterrows():
-            f.write(f"--- {row['User']} at {row['Date']} ---
-")
+            f.write(f"--- {row['User']} at {row['Date']} ---\n")
             f.write(row['Tweet'])
             f.write("\n\n")
 
@@ -53,4 +59,6 @@ if __name__ == '__main__':
     # テスト用のTwitterアカウントリスト
     # ここに情報を取得したいアカウントのIDを追加してください
     target_accounts = ["elonmusk", "VitalikButerin"]
-    get_last_week_tweets(target_accounts)
+    DAYS_TO_FETCH = 7
+    get_tweets(target_accounts, DAYS_TO_FETCH)
+    print("\nTwitter fetching process finished.")

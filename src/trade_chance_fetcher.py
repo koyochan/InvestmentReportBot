@@ -145,7 +145,7 @@ def extract_data_from_html(html_content):
 
     return extracted_stocks
 
-def main():
+def main(days: int = 7):
     """
     メインの処理を実行する関数
     """
@@ -154,8 +154,8 @@ def main():
     today = datetime.now()
 
     print("--- 取得対象URLリスト ---")
-    # 取得日数を3日間に設定
-    for i in range(7): 
+    # 取得日数を引数で指定できるようにする
+    for i in range(days): 
         target_date = today - timedelta(days=i)
         date_str = target_date.strftime('%Y-%m-%d')
         morning_url = f"{base_url}/{date_str}/morning"
@@ -204,8 +204,7 @@ def main():
                     processed_stocks_lines.append(line)
                 
                 date_part_for_header = url.split('/')[-2] + " " + url.split('/')[-1]
-                all_signals_text.append(f"--- {date_part_for_header} ---
-" + "\n".join(processed_stocks_lines))
+                all_signals_text.append(f"--- {date_part_for_header} ---\n" + "\n".join(processed_stocks_lines))
                 processed_count += 1
             else:
                 print(f"  [WARN] ページ取得に失敗しました。ステータスコード: {response.status_code}")
@@ -234,5 +233,7 @@ def main():
         print("[OK] ファイルの保存が完了しました。")
 
 if __name__ == '__main__':
-    main()
+    # 取得する日数を指定
+    DAYS_TO_FETCH = 7
+    main(days=DAYS_TO_FETCH)
     print("\n全ての処理が完了しました。")

@@ -1,4 +1,3 @@
-
 import requests
 from bs4 import BeautifulSoup
 import sys
@@ -38,17 +37,53 @@ def scrape_article(url):
         print(f"An unexpected error occurred: {e}", file=sys.stderr)
         return None
 
+def scrape_articles(urls: list[str], days: int = 7):
+    """
+    URLのリストから記事をスクレイピングし、1つのファイルにまとめる。
+    日付の引数(days)は他のfetcherとのインターフェースを合わせるためのもので、
+    この関数では使用されません。
+    
+    Args:
+        urls (list[str]): スクレイピング対象のURLリスト。
+        days (int): インターフェース統一のための引数（未使用）。
+
+    Returns:
+        str: 保存されたファイルのパス。
+    """
+    all_articles_text = []
+    for url in urls:
+        print(f"Scraping article from: {url}")
+        article_text = scrape_article(url)
+        if article_text:
+            all_articles_text.append(f"--- Source: {url} ---\n{article_text}")
+    
+    if not all_articles_text:
+        print("No articles were successfully scraped.")
+        return ""
+
+    output_dir = 'output'
+    os.makedirs(output_dir, exist_ok=True)
+    today_filename_str = datetime.now().strftime('%Y%m%d')
+    output_filename = f"{today_filename_str}_articles_report.txt"
+    output_filepath = os.path.join(output_dir, output_filename)
+
+    with open(output_filepath, 'w', encoding='utf-8') as f:
+        f.write("\n\n".join(all_articles_text))
+
+    print(f"Scraped articles saved to {output_filepath}")
+    return output_filepath
+
 if __name__ == '__main__':
-    # テスト用のURL (AVCのブログ記事)
-    # 将来的にはNewsPicksなどの他のURLにも対応させる
-    test_url = "https://avc.com/2024/08/the-new-york-trilogy/"
+    import os
+    from datetime import datetime
 
-    print(f"Scraping article from: {test_url}")
-    article_text = scrape_article(test_url)
-
-    if article_text:
-        print("\n--- Article Text ---")
-        print(article_text)
-        print("\n--- End of Article ---")
-    else:
-        print("Failed to scrape the article.")
+    # テスト用のURLリスト
+    # 日付でのフィルタリングはサイトの構造に依存するため、ここではURLリストを直接指定
+    test_urls = [
+        "https://avc.com/2024/08/the-new-york-trilogy/",
+        "https://avc.com/2024/08/a-big-new-thing/"
+    ]
+    
+    print(f"Scraping {len(test_urls)} articles...")
+    scrape_articles(test_urls)
+    print("\nArticle scraping process finished.")

@@ -1,0 +1,10 @@
+google-generativeai
+requests
+beautifulsoup4
+pandas
+yt-dlp
+yfinance
+snscrape
+pandas-ta
+python-dotenv
+sumy

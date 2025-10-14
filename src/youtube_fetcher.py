@@ -59,11 +59,11 @@ def cleanup_text(text):
     cleaned_text = " ".join(cleaned_text.split())
     return cleaned_text
 
-def process_source(source_url):
+def process_source(source_url, days: int):
     """
     単一のURL（チャンネル or 再生リスト）を処理し、要約のリストを返す。
     """
-    one_week_ago = (datetime.now() - timedelta(days=7)).date()
+    one_week_ago = (datetime.now() - timedelta(days=days)).date()
     # 一時ファイル用のディレクトリ
     transcripts_dir = 'transcripts'
     if not os.path.exists(transcripts_dir): os.makedirs(transcripts_dir)
@@ -138,6 +138,7 @@ if __name__ == '__main__':
     source_urls = [
         'https://www.youtube.com/@AC_Investor',
         'https://www.youtube.com/watch?v=5tE_1UbzliI&list=PL-edxQ__zW_VuVcjAhsL_JvlfiZD19LdS',
+        'https://www.youtube.com/@mabuchi-mariko/'
     ]
     # === ▼▼▼ 修正箇所 ▼▼▼ ===
     # 最終的な出力ファイルを保存するディレクトリを定義
@@ -147,8 +148,10 @@ if __name__ == '__main__':
     # === ▲▲▲ ▲▲▲ ▲▲▲ ===
 
     all_summaries = []
+    DAYS_TO_FETCH = 7
+    print(f"Fetching YouTube videos from the last {DAYS_TO_FETCH} days...")
     for url in source_urls:
-        summaries = process_source(url)
+        summaries = process_source(url, days=DAYS_TO_FETCH)
         all_summaries.extend(summaries)
 
     if all_summaries:
