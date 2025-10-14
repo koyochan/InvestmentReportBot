@@ -123,7 +123,7 @@ if __name__ == '__main__':
     DAYS_TO_FETCH = 7
     # 取得したいメールの送信元と宛先を指定してください
     FROM_EMAIL = "user@example.com"
-    TO_EMAIL = "your-email@example.com"
+    TO_EMAIL = "kkobayashi12356@gmail.com"
     # ================
     
     print(f"過去{DAYS_TO_FETCH}日間のメールを取得します (From: {FROM_EMAIL}, To: {TO_EMAIL})")

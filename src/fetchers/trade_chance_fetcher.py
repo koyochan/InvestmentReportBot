@@ -5,21 +5,20 @@ from datetime import datetime, timedelta
 import os
 import re
 import yfinance as yf
-import pandas_ta as ta
 
 def get_technical_indicators(stock_code: str):
     """
-    yfinanceとpandas-taを使用して、指定された銘柄のテクニカル指標を取得する。
+    yfinanceを使用して、指定された銘柄の基本的な株価情報を取得する。
     Args:
         stock_code (str): 証券コード (例: "7203")
     Returns:
-        dict: 'price', 'change', 'macd', 'rsi', 'volume' を含む辞書。
+        dict: 'price', 'change', 'volume' を含む辞書。
               取得失敗時は値が "N/A" となる。
     """
     try:
         # .T をつけて日本の証券取引所を指定
         ticker = yf.Ticker(f"{stock_code}.T")
-        # 1年分のデータを取得してテクニカル指標を計算
+        # 1年分のデータを取得
         hist = ticker.history(period="1y")
 
         if hist.empty:
@@ -28,27 +27,21 @@ def get_technical_indicators(stock_code: str):
                 'rsi': 'N/A', 'volume': 'N/A'
             }
 
-        # pandas-taでMACDとRSIを計算
-        hist.ta.macd(append=True)
-        hist.ta.rsi(append=True)
+        # pandas-taでの計算をコメントアウト
+        # hist.ta.macd(append=True)
+        # hist.ta.rsi(append=True)
 
         # 最新のデータを取得
         latest = hist.iloc[-1]
         price = latest['Close']
         change = price - hist.iloc[-2]['Close']
-        
-        # 最新の指標を取得
-        macd_line = latest.get('MACD_12_26_9', 'N/A')
-        macd_signal = latest.get('MACDs_12_26_9', 'N/A')
-        macd_hist = latest.get('MACDh_12_26_9', 'N/A')
-        rsi = latest.get('RSI_14', 'N/A')
         volume = latest['Volume']
 
         return {
             'price': f"{price:.2f}",
             'change': f"{change:+.2f}",
-            'macd': f"L:{macd_line:.2f} S:{macd_signal:.2f} H:{macd_hist:.2f}",
-            'rsi': f"{rsi:.2f}",
+            'macd': "N/A", # pandas-ta を使わないため N/A
+            'rsi': "N/A",   # pandas-ta を使わないため N/A
             'volume': f"{volume:,}"
         }
 

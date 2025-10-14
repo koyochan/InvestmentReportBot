@@ -134,59 +134,55 @@ def process_source(source_url, days: int):
                     print(f"    [!] エラー: '{base_title}' の処理中にエラーが発生しました: {e}")
     return summaries
 
+def fetch_youtube_summaries(source_urls: list[str], days: int) -> str:
+    """
+    複数のYouTubeのURLから動画の要約を取得し、1つのファイルにまとめる。
+
+    Args:
+        source_urls (list[str]): YouTubeチャンネルまたは再生リストのURLリスト。
+        days (int): 何日前までの動画を対象とするか。
+
+    Returns:
+        str: 保存されたファイルのパス。要約がなければ空文字を返す。
+    """
+    final_output_dir = 'output'
+    if not os.path.exists(final_output_dir):
+        os.makedirs(final_output_dir)
+
+    all_summaries = []
+    print(f"Fetching YouTube videos from the last {days} days...")
+    for url in source_urls:
+        summaries = process_source(url, days=days)
+        all_summaries.extend(summaries)
+
+    if not all_summaries:
+        print("\n[*] No videos found to process for any of the URLs.")
+        return ""
+
+    today_str = datetime.now().strftime('%Y%m%d')
+    base_filename = f"{today_str}_youtube_report.txt"
+    # outputディレクトリはsrcと同階層にある想定
+    final_filepath = os.path.join(os.path.dirname(__file__), '..', '..', 'output', base_filename)
+
+
+    separator = "\n\n---\n\n"
+    summaries_content = separator.join(all_summaries)
+    
+    with open(final_filepath, 'w', encoding='utf-8') as f:
+        f.write(summaries_content)
+    
+    print(f"\n{'='*20}\nAll summaries saved to '{final_filepath}'.\n{'='*20}")
+    return final_filepath
+
 if __name__ == '__main__':
-    source_urls = [
+    # テスト用のURLリスト
+    test_source_urls = [
         'https://www.youtube.com/@AC_Investor',
         'https://www.youtube.com/watch?v=5tE_1UbzliI&list=PL-edxQ__zW_VuVcjAhsL_JvlfiZD19LdS',
         'https://www.youtube.com/@mabuchi-mariko/'
     ]
-    # === ▼▼▼ 修正箇所 ▼▼▼ ===
-    # 最終的な出力ファイルを保存するディレクトリを定義
-    final_output_dir = 'output'
-    if not os.path.exists(final_output_dir):
-        os.makedirs(final_output_dir)
-    # === ▲▲▲ ▲▲▲ ▲▲▲ ===
-
-    all_summaries = []
     DAYS_TO_FETCH = 7
-    print(f"Fetching YouTube videos from the last {DAYS_TO_FETCH} days...")
-    for url in source_urls:
-        summaries = process_source(url, days=DAYS_TO_FETCH)
-        all_summaries.extend(summaries)
+    
+    fetch_youtube_summaries(test_source_urls, DAYS_TO_FETCH)
 
-    if all_summaries:
-        prompt_filename = 'prompt.txt'
-        default_prompt_text = """以下のテキストは、複数の投資に関するYouTube動画の文字起こしを要約したものです。
-内容の要点を保持しつつ、冗長な表現や会話特有のフィラーワードを削除し、全体を一つの滑らかで一貫性のあるレポートにまとめてください。
-
----
-"""
-        if not os.path.exists(prompt_filename):
-            print(f"\n[*] デバッグ: プロンプトファイル '{prompt_filename}' が見つかりません。デフォルトの内容で作成します。")
-            with open(prompt_filename, 'w', encoding='utf-8') as f:
-                f.write(default_prompt_text)
-        
-        with open(prompt_filename, 'r', encoding='utf-8') as f:
-            prompt_header = f.read()
-            
-        today_str = datetime.now().strftime('%Y%m%d')
-        # === ▼▼▼ 修正箇所 ▼▼▼ ===
-        # ファイル名とパスを結合して、'output' ディレクトリ内に保存する
-        base_filename = f"{today_str}_youtube_report.txt"
-        final_filepath = os.path.join(final_output_dir, base_filename)
-        # === ▲▲▲ ▲▲▲ ▲▲▲ ===
-        
-        separator = "\n\n---\n\n"
-        summaries_content = separator.join(all_summaries)
-        final_content = prompt_header + "\n" + summaries_content
-        
-        with open(final_filepath, 'w', encoding='utf-8') as f:
-            f.write(final_content)
-        
-        # === ▼▼▼ 修正箇所 ▼▼▼ ===
-        # 保存先のパスをメッセージに表示
-        print(f"\n{'='*20}\n全ての要約を '{final_filepath}' にまとめて保存しました。\n{'='*20}")
-    else:
-        print("\n[*] 全てのURLで処理対象の動画が見つかりませんでした。")
-
-    print("\n全ての処理が完了しました。")
+    print("\nYouTube fetching process finished.")
